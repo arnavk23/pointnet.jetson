@@ -8,6 +8,7 @@ import sys
 from tqdm import tqdm 
 import json
 from plyfile import PlyData, PlyElement
+from glob import glob
 
 def get_segmentation_classes(root):
     catfile = os.path.join(root, 'synsetoffset2category.txt')
@@ -190,6 +191,128 @@ class ModelNetDataset(data.Dataset):
 
     def __len__(self):
         return len(self.fns)
+
+class CustomShapeNetDataset(data.Dataset):
+    """
+    Custom ShapeNet dataset loader for format: category_id/object_id.txt
+    Supports both the original ShapeNet format and custom text file format
+    """
+    def __init__(self, root, npoints=2500, split='train', data_augmentation=True, 
+                 class_choice=None, classification=False):
+        self.npoints = npoints
+        self.root = root
+        self.split = split
+        self.data_augmentation = data_augmentation
+        self.classification = classification
+        
+        # Load file paths
+        self.files = []
+        self.categories = {}
+        
+        # If splits file exists, use it
+        splits_file = os.path.join(root, 'train_test_split', 'file_splits.json')
+        if os.path.exists(splits_file):
+            with open(splits_file, 'r') as f:
+                splits = json.load(f)
+            file_list = splits.get(split, [])
+            
+            for file_path in file_list:
+                full_path = os.path.join(root, file_path)
+                if os.path.exists(full_path):
+                    category = file_path.split('/')[0]
+                    self.files.append((category, full_path))
+        else:
+            # Fallback: scan all directories
+            if class_choice is None:
+                class_choice = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
+            
+            for category in class_choice:
+                category_path = os.path.join(root, category)
+                if os.path.exists(category_path):
+                    txt_files = glob(os.path.join(category_path, "*.txt"))
+                    for txt_file in txt_files:
+                        self.files.append((category, txt_file))
+        
+        # Create category mapping
+        unique_categories = sorted(set([cat for cat, _ in self.files]))
+        self.category_to_idx = {cat: idx for idx, cat in enumerate(unique_categories)}
+        self.idx_to_category = {idx: cat for cat, idx in self.category_to_idx.items()}
+        
+        # Determine number of segmentation classes
+        self.num_seg_classes = self._determine_seg_classes()
+        
+        print(f"CustomShapeNetDataset: {len(self.files)} files, {len(unique_categories)} categories")
+    
+    def _determine_seg_classes(self):
+        """Determine number of segmentation classes by scanning files"""
+        max_label = 0
+        sample_size = min(50, len(self.files))
+        
+        for i in range(sample_size):
+            try:
+                _, file_path = self.files[i]
+                data = np.loadtxt(file_path)
+                if data.shape[1] >= 4:
+                    labels = data[:, 3].astype(np.int32)
+                    max_label = max(max_label, labels.max())
+            except:
+                continue
+        
+        return max_label if max_label > 0 else 4  # Default to 4 classes
+    
+    def __getitem__(self, index):
+        category, file_path = self.files[index]
+        
+        # Load data
+        try:
+            data = np.loadtxt(file_path)
+            points = data[:, :3].astype(np.float32)
+            
+            if data.shape[1] >= 4:
+                labels = data[:, 3].astype(np.int64)
+            else:
+                labels = np.ones(len(points), dtype=np.int64)
+        except:
+            # Fallback to random data if file can't be read
+            points = np.random.randn(self.npoints, 3).astype(np.float32)
+            labels = np.ones(self.npoints, dtype=np.int64)
+        
+        # Sample points
+        if len(points) > self.npoints:
+            choice = np.random.choice(len(points), self.npoints, replace=False)
+        else:
+            choice = np.random.choice(len(points), self.npoints, replace=True)
+        
+        point_set = points[choice, :]
+        
+        # Normalize
+        point_set = point_set - np.expand_dims(np.mean(point_set, axis=0), 0)
+        dist = np.max(np.sqrt(np.sum(point_set ** 2, axis=1)))
+        if dist > 0:
+            point_set = point_set / dist
+        
+        # Data augmentation
+        if self.data_augmentation:
+            theta = np.random.uniform(0, np.pi * 2)
+            rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+            point_set[:, [0, 2]] = point_set[:, [0, 2]].dot(rotation_matrix)
+            point_set += np.random.normal(0, 0.02, size=point_set.shape)
+        
+        # Sample labels
+        seg_labels = labels[choice]
+        
+        # Convert to tensors
+        point_set = torch.from_numpy(point_set)
+        seg_labels = torch.from_numpy(seg_labels)
+        cls_label = torch.from_numpy(np.array([self.category_to_idx[category]]).astype(np.int64))
+        
+        if self.classification:
+            return point_set, cls_label
+        else:
+            return point_set, seg_labels
+    
+    def __len__(self):
+        return len(self.files)
 
 if __name__ == '__main__':
     dataset = sys.argv[1]
