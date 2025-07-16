@@ -197,13 +197,14 @@ def main():
         
         for i, data in enumerate(dataloader):
             points, target = data
-            points = points.transpose(2, 1)
+            points = points.transpose(2, 1).float
             
             if torch.cuda.is_available():
                 points, target = points.cuda(), target.cuda()
             
             optimizer.zero_grad()
             
+            points = points.float()
             pred, trans, trans_feat = classifier(points)
             pred = pred.view(-1, num_classes)
             target = target.view(-1, 1)[:, 0] - 1  # Convert to 0-indexed
@@ -241,11 +242,12 @@ def main():
         with torch.no_grad():
             for i, data in enumerate(testdataloader):
                 points, target = data
-                points = points.transpose(2, 1)
+                points = points.transpose(2, 1).float()
                 
                 if torch.cuda.is_available():
                     points, target = points.cuda(), target.cuda()
                 
+                points = points.float()
                 pred, trans, trans_feat = classifier(points)
                 pred = pred.view(-1, num_classes)
                 target = target.view(-1, 1)[:, 0] - 1
