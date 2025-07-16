@@ -1,0 +1,6 @@
+{
+  "npoints": 2500,
+  "device": "cuda",
+  "jetson_optimized": true,
+  "memory_fraction": 0.8
+}
