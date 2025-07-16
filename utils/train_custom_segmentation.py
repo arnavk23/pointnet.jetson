@@ -55,16 +55,20 @@ def create_category_mapping(root_dir):
 
 def save_model_info(model_path, category_mapping, num_classes, args):
     """Save model information for inference"""
-    info = {
-        'num_classes': num_classes,
-        'category_mapping': category_mapping,
-        'model_args': vars(args),
-        'npoints': args.npoints
+    # Convert all values to native Python types
+    safe_args = {k: (int(v) if isinstance(v, (np.integer,)) else v) for k, v in vars(args).items()}
+    
+    # Convert other NumPy types if needed
+    safe_info = {
+        'num_classes': int(num_classes),  # ensure it's a plain int
+        'category_mapping': {str(k): str(v) for k, v in category_mapping.items()},
+        'model_args': safe_args,
+        'npoints': int(args.npoints)
     }
     
     info_path = model_path.replace('.pth', '_info.json')
     with open(info_path, 'w') as f:
-        json.dump(info, f, indent=2)
+        json.dump(safe_info, f, indent=2)
     
     print(f"Model info saved to: {info_path}")
 
