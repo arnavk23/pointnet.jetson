@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Example workflow for ZED camera + PointNet semantic segmentation
 This script demonstrates the complete pipeline from data preparation to inference
